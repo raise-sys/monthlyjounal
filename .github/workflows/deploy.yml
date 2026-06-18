@@ -25,6 +25,21 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Verify .NET SDK
+        id: verify-dotnet
+        continue-on-error: true
+        run: dotnet --version
+
+      - name: Install .NET 10 manually
+        if: steps.verify-dotnet.outcome == 'failure'
+        run: |
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          dotnet --version
+
+      - name: Install WASM workload
+        run: dotnet workload install wasm-tools --skip-manifest-update
+
       - name: Publish
         run: dotnet publish -c Release -p:BaseHref=/monthlyjounal/
         working-directory: monthlyjounal
