@@ -1,0 +1,521 @@
+﻿@page "/"
+@using Microsoft.JSInterop
+@using System.Text.Json
+@inject IJSRuntime JS
+
+<PageTitle>Monthly Journal</PageTitle>
+
+<div class="journal-page">
+    <section class="journal-header">
+        <div>
+            <p class="eyebrow">Monthly Journal</p>
+            <h1>@SelectedMonthLabel の習慣トラッカー</h1>
+            <p class="subtext">左に習慣チェックと記録項目、その右にその日のハイライトをまとめられます。</p>
+        </div>
+
+        <div class="month-picker">
+            <label>
+                年
+                <input type="number" min="2000" max="2100" @bind="SelectedYear" @bind:after="HandleMonthChangedAsync" />
+            </label>
+            <label>
+                月
+                <select @bind="SelectedMonth" @bind:after="HandleMonthChangedAsync">
+                    @for (var month = 1; month <= 12; month++)
+                    {
+                        <option value="@month">@month 月</option>
+                    }
+                </select>
+            </label>
+            <button type="button" class="today-button" @onclick="GoToTodayAsync">本日</button>
+        </div>
+    </section>
+
+    <section class="setup-panel">
+        <div class="setup-card">
+            <h2>習慣化したい項目</h2>
+            <div class="input-row">
+                <input placeholder="例: 朝活, 読書, 英単語" @bind="NewHabitName" @bind:event="oninput" />
+                <button class="primary-button" @onclick="AddHabit">追加</button>
+            </div>
+            <div class="tag-list">
+                @foreach (var habit in HabitItems)
+                {
+                    <button type="button" class="tag-button" @onclick="() => RemoveHabit(habit.Id)">
+                        @habit.Name <span>×</span>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="setup-card">
+            <h2>記録したい項目</h2>
+            <div class="input-row">
+                <input placeholder="例: 体重, 睡眠, 学習時間" @bind="NewMetricName" @bind:event="oninput" />
+                <button class="primary-button" @onclick="AddMetric">追加</button>
+            </div>
+            <div class="tag-list">
+                @foreach (var metric in MetricItems)
+                {
+                    <button type="button" class="tag-button" @onclick="() => RemoveMetric(metric.Id)">
+                        @metric.Name <span>×</span>
+                    </button>
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="journal-board">
+        <div class="board-scroll journal-desktop">
+            <table class="journal-table">
+                <thead>
+                    <tr>
+                        <th class="day-header">日</th>
+
+                        @foreach (var habit in HabitItems)
+                        {
+                            <th class="habit-header">
+                                <span>@habit.Name</span>
+                            </th>
+                        }
+
+                        @foreach (var metric in MetricItems)
+                        {
+                            <th class="metric-header">
+                                <span>@metric.Name</span>
+                            </th>
+                        }
+
+                        <th class="highlight-header">ハイライト</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var day in DaysInMonth)
+                    {
+                        <tr id="journal-day-@day" class="@GetDayRowClass(day)">
+                            <th class="day-cell">@day</th>
+
+                            @foreach (var habit in HabitItems)
+                            {
+                                var status = GetHabitStatus(habit.Id, day);
+                                <td class="check-cell">
+                                    <button type="button"
+                                            class="check-button @GetStatusClass(status)"
+                                            title="クリックで 空欄 → △ → ○ を切り替え"
+                                            @onclick="() => CycleHabitStatus(habit.Id, day)">
+                                        @GetStatusSymbol(status)
+                                    </button>
+                                </td>
+                            }
+
+                            @foreach (var metric in MetricItems)
+                            {
+                                <td class="metric-cell">
+                                    <input placeholder="記録"
+                                           value="@GetMetricValue(metric.Id, day)"
+                                           @onchange="(args) => UpdateMetricValue(metric.Id, day, args.Value?.ToString() ?? string.Empty)" />
+                                </td>
+                            }
+
+                            <td class="highlight-cell">
+                                <textarea placeholder="今日のハイライト"
+                                          value="@GetHighlight(day)"
+                                          @onchange="(args) => UpdateHighlight(day, args.Value?.ToString() ?? string.Empty)"></textarea>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="journal-mobile">
+            @foreach (var day in DaysInMonth)
+            {
+                <article id="@($"journal-day-{day}-mobile")" class="day-card @GetDayRowClass(day)">
+                    <header class="day-card-header">
+                        <span class="day-card-date">@day 日</span>
+                    </header>
+
+                    @if (HabitItems.Count > 0)
+                    {
+                        <div class="day-card-section">
+                            <h3>習慣</h3>
+                            <div class="day-card-habits">
+                                @foreach (var habit in HabitItems)
+                                {
+                                    var status = GetHabitStatus(habit.Id, day);
+                                    <div class="habit-row">
+                                        <span class="habit-label">@habit.Name</span>
+                                        <button type="button"
+                                                class="check-button @GetStatusClass(status)"
+                                                title="クリックで 空欄 → △ → ○ を切り替え"
+                                                @onclick="() => CycleHabitStatus(habit.Id, day)">
+                                            @GetStatusSymbol(status)
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @if (MetricItems.Count > 0)
+                    {
+                        <div class="day-card-section">
+                            <h3>記録</h3>
+                            <div class="day-card-metrics">
+                                @foreach (var metric in MetricItems)
+                                {
+                                    <label class="metric-row">
+                                        <span class="metric-label">@metric.Name</span>
+                                        <input placeholder="記録"
+                                               value="@GetMetricValue(metric.Id, day)"
+                                               @onchange="(args) => UpdateMetricValue(metric.Id, day, args.Value?.ToString() ?? string.Empty)" />
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="day-card-section">
+                        <h3>ハイライト</h3>
+                        <textarea class="day-card-highlight"
+                                  placeholder="今日のハイライト"
+                                  value="@GetHighlight(day)"
+                                  @onchange="(args) => UpdateHighlight(day, args.Value?.ToString() ?? string.Empty)"></textarea>
+                    </div>
+                </article>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private const string StorageKey = "monthly-journal-state-v1";
+
+    private int SelectedYear = DateTime.Today.Year;
+    private int SelectedMonth = DateTime.Today.Month;
+
+    private string NewHabitName = string.Empty;
+    private string NewMetricName = string.Empty;
+
+    private List<TrackItem> HabitItems = new();
+    private List<TrackItem> MetricItems = new();
+
+    private Dictionary<string, HabitCheckStatus> HabitChecks = new();
+    private Dictionary<int, string> Highlights = new();
+    private Dictionary<string, string> MetricValues = new();
+
+    private bool _isLoaded;
+    private int? _scrollToDay;
+
+    private int EffectiveYear => Math.Clamp(SelectedYear, 2000, 2100);
+    private int EffectiveMonth => Math.Clamp(SelectedMonth, 1, 12);
+    private IEnumerable<int> DaysInMonth => Enumerable.Range(1, DateTime.DaysInMonth(EffectiveYear, EffectiveMonth));
+    private string SelectedMonthLabel => $"{EffectiveMonth}月";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadAsync();
+            _isLoaded = true;
+            StateHasChanged();
+        }
+
+        if (_scrollToDay is int day)
+        {
+            _scrollToDay = null;
+            await JS.InvokeVoidAsync("journalScroll.scrollToDay", $"journal-day-{day}");
+        }
+    }
+
+    private async Task GoToTodayAsync()
+    {
+        var today = DateTime.Today;
+        SelectedYear = today.Year;
+        SelectedMonth = today.Month;
+        _scrollToDay = today.Day;
+        await HandleMonthChangedAsync();
+    }
+
+    private string GetDayRowClass(int day)
+    {
+        var today = DateTime.Today;
+        return EffectiveYear == today.Year && EffectiveMonth == today.Month && day == today.Day
+            ? "today-row"
+            : string.Empty;
+    }
+
+    private async Task HandleMonthChangedAsync()
+    {
+        SelectedYear = EffectiveYear;
+        SelectedMonth = EffectiveMonth;
+        TrimDataOutsideMonth();
+        await SaveAsync();
+    }
+
+    private void AddHabit()
+    {
+        var name = NewHabitName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        HabitItems.Add(new TrackItem { Name = name });
+        NewHabitName = string.Empty;
+        _ = SaveAsync();
+    }
+
+    private void RemoveHabit(Guid habitId)
+    {
+        HabitItems.RemoveAll(item => item.Id == habitId);
+
+        var prefix = $"{habitId}:";
+        foreach (var key in HabitChecks.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+        {
+            HabitChecks.Remove(key);
+        }
+
+        _ = SaveAsync();
+    }
+
+    private void AddMetric()
+    {
+        var name = NewMetricName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        MetricItems.Add(new TrackItem { Name = name });
+        NewMetricName = string.Empty;
+        _ = SaveAsync();
+    }
+
+    private void RemoveMetric(Guid metricId)
+    {
+        MetricItems.RemoveAll(item => item.Id == metricId);
+
+        var prefix = $"{metricId}:";
+        foreach (var key in MetricValues.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+        {
+            MetricValues.Remove(key);
+        }
+
+        _ = SaveAsync();
+    }
+
+    private HabitCheckStatus GetHabitStatus(Guid habitId, int day)
+    {
+        return HabitChecks.TryGetValue(CreateHabitKey(habitId, day), out var status)
+            ? status
+            : HabitCheckStatus.None;
+    }
+
+    private void CycleHabitStatus(Guid habitId, int day)
+    {
+        var key = CreateHabitKey(habitId, day);
+        var next = GetHabitStatus(habitId, day) switch
+        {
+            HabitCheckStatus.None => HabitCheckStatus.Triangle,
+            HabitCheckStatus.Triangle => HabitCheckStatus.Circle,
+            _ => HabitCheckStatus.None
+        };
+
+        if (next == HabitCheckStatus.None)
+        {
+            HabitChecks.Remove(key);
+        }
+        else
+        {
+            HabitChecks[key] = next;
+        }
+
+        _ = SaveAsync();
+    }
+
+    private string GetStatusSymbol(HabitCheckStatus status) => status switch
+    {
+        HabitCheckStatus.Triangle => "△",
+        HabitCheckStatus.Circle => "○",
+        _ => string.Empty
+    };
+
+    private string GetStatusClass(HabitCheckStatus status) => status switch
+    {
+        HabitCheckStatus.Triangle => "triangle",
+        HabitCheckStatus.Circle => "circle",
+        _ => "none"
+    };
+
+    private string GetHighlight(int day)
+    {
+        return Highlights.TryGetValue(day, out var value) ? value : string.Empty;
+    }
+
+    private void UpdateHighlight(int day, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            Highlights.Remove(day);
+        }
+        else
+        {
+            Highlights[day] = value.Trim();
+        }
+
+        _ = SaveAsync();
+    }
+
+    private string GetMetricValue(Guid metricId, int day)
+    {
+        return MetricValues.TryGetValue(CreateMetricKey(metricId, day), out var value) ? value : string.Empty;
+    }
+
+    private void UpdateMetricValue(Guid metricId, int day, string value)
+    {
+        var key = CreateMetricKey(metricId, day);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            MetricValues.Remove(key);
+        }
+        else
+        {
+            MetricValues[key] = value.Trim();
+        }
+
+        _ = SaveAsync();
+    }
+
+    private string CreateHabitKey(Guid habitId, int day) => $"{habitId}:{day}";
+    private string CreateMetricKey(Guid metricId, int day) => $"{metricId}:{day}";
+
+    private void TrimDataOutsideMonth()
+    {
+        var validDays = DaysInMonth.ToHashSet();
+
+        foreach (var day in Highlights.Keys.Where(day => !validDays.Contains(day)).ToList())
+        {
+            Highlights.Remove(day);
+        }
+
+        foreach (var key in HabitChecks.Keys.Where(key => !IsDayKeyValid(key, validDays)).ToList())
+        {
+            HabitChecks.Remove(key);
+        }
+
+        foreach (var key in MetricValues.Keys.Where(key => !IsDayKeyValid(key, validDays)).ToList())
+        {
+            MetricValues.Remove(key);
+        }
+    }
+
+    private static bool IsDayKeyValid(string key, HashSet<int> validDays)
+    {
+        var parts = key.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2 && int.TryParse(parts[1], out var day) && validDays.Contains(day);
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                SetDefaultItems();
+                return;
+            }
+
+            var state = JsonSerializer.Deserialize<JournalState>(json);
+            if (state is null)
+            {
+                SetDefaultItems();
+                return;
+            }
+
+            SelectedYear = state.Year;
+            SelectedMonth = state.Month;
+            HabitItems = state.Habits ?? new();
+            MetricItems = state.Metrics ?? new();
+            HabitChecks = state.HabitChecks ?? new();
+            Highlights = state.Highlights ?? new();
+            MetricValues = state.MetricValues ?? new();
+
+            if (HabitItems.Count == 0 && MetricItems.Count == 0)
+            {
+                SetDefaultItems();
+            }
+
+            TrimDataOutsideMonth();
+        }
+        catch
+        {
+            SetDefaultItems();
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!_isLoaded)
+        {
+            return;
+        }
+
+        var state = new JournalState
+        {
+            Year = EffectiveYear,
+            Month = EffectiveMonth,
+            Habits = HabitItems,
+            Metrics = MetricItems,
+            HabitChecks = HabitChecks,
+            Highlights = Highlights,
+            MetricValues = MetricValues
+        };
+
+        var json = JsonSerializer.Serialize(state);
+        await JS.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
+    }
+
+    private void SetDefaultItems()
+    {
+        HabitItems =
+        [
+            new TrackItem { Name = "朝活" },
+            new TrackItem { Name = "英単語" },
+            new TrackItem { Name = "運動" }
+        ];
+
+        MetricItems =
+        [
+            new TrackItem { Name = "体重" },
+            new TrackItem { Name = "睡眠" },
+            new TrackItem { Name = "学習" }
+        ];
+    }
+
+    private sealed class JournalState
+    {
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public List<TrackItem>? Habits { get; set; }
+        public List<TrackItem>? Metrics { get; set; }
+        public Dictionary<string, HabitCheckStatus>? HabitChecks { get; set; }
+        public Dictionary<int, string>? Highlights { get; set; }
+        public Dictionary<string, string>? MetricValues { get; set; }
+    }
+
+    private sealed class TrackItem
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private enum HabitCheckStatus
+    {
+        None,
+        Triangle,
+        Circle
+    }
+}
